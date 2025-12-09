@@ -1,0 +1,12 @@
+# Python
+__pycache__/
+*.pyc
+
+# Virtual environment
+venv/
+env/
+
+# dotenv files - ignore local env files but keep example
+.env
+.env.*
+!.env.example
