@@ -4,6 +4,7 @@ import os
 import random
 import logging
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordBearer
 from pydantic import BaseModel
 from typing import Optional
 import asyncpg
