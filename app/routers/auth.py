@@ -23,6 +23,7 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 # In-memory OTP store (simple & effective for MVP)
 otp_store = {}
 
+
 # ────────────────────────────── SCHEMAS ──────────────────────────────
 
 class PhoneRequest(BaseModel):
@@ -50,8 +51,7 @@ class UserOut(BaseModel):
 # ────────────────────────────── DEPENDENCIES ──────────────────────────────
 
 async def get_db() -> asyncpg.Connection:
-    # Reuse the same pool from main.py lifespan
-    from ..main import pool  # Adjust path if needed
+    from ..main import pool  # Reuse pool from main.py
     async with pool.acquire() as conn:
         yield conn
 
@@ -59,7 +59,7 @@ async def get_db() -> asyncpg.Connection:
 # ────────────────────────────── HELPERS ──────────────────────────────
 
 def create_jwt(data: dict) -> str:
-    from ..utils import create_jwt as utils_create_jwt  # import your existing function
+    from ..utils import create_jwt as utils_create_jwt
     return utils_create_jwt(data)
 
 
@@ -79,12 +79,17 @@ async def send_sms_via_africastalking(phone: str, message: str) -> bool:
     try:
         africastalking.initialize(username, api_key)
         sms = africastalking.SMS
-        kwargs = {"to": phone, "message": message}
+
+        # Correct Africa's Talking SDK call: message first, recipients list second
+        recipients = [phone]
         if from_number:
-            kwargs["from_"] = from_number
-        response = sms.send(**kwargs)
-        logging.info("Africa's Talking SMS sent: %s", response)
+            response = sms.send(message, recipients, sender=from_number)
+        else:
+            response = sms.send(message, recipients)
+
+        logging.info("Africa's Talking SMS sent successfully: %s", response)
         return True
+
     except Exception as e:
         logging.exception("Failed to send SMS via Africa's Talking: %s", e)
         return False
@@ -96,17 +101,17 @@ async def send_sms_via_africastalking(phone: str, message: str) -> bool:
 async def send_otp(req: PhoneRequest):
     otp = random.randint(100000, 999999)
     otp_store[req.phone] = str(otp)
-    msg = f"Your MOTOFIX OTP is {otp}"
+    msg = f"Your MOTOFIX OTP is {otp}. Valid for 10 minutes."
 
     sent = await send_sms_via_africastalking(req.phone, msg)
 
-    # Always log OTP for local/dev testing
+    # Always print OTP to logs for testing
     print(f"\nOTP → {req.phone}: {otp}\n")
 
     if sent:
-        return {"message": "OTP sent successfully"}
+        return {"message": "OTP sent successfully via SMS"}
     else:
-        return {"message": "OTP generated (printed to console - provider not configured)"}
+        return {"message": "OTP generated and printed to logs (SMS provider not configured or failed)"}
 
 
 @router.post("/login", response_model=Token)
@@ -126,7 +131,12 @@ async def login(req: OTPVerify, db: asyncpg.Connection = Depends(get_db)):
             VALUES ($1, $2, $3)
             RETURNING id
         """
-        user_id = await db.fetchval(insert_query, req.phone, req.full_name or "Driver", req.role)
+        user_id = await db.fetchval(
+            insert_query,
+            req.phone,
+            req.full_name or "Driver",
+            req.role
+        )
     else:
         user_id = user_row["id"]
 
@@ -146,7 +156,7 @@ async def me(token: str = Depends(oauth2_scheme), db: asyncpg.Connection = Depen
     try:
         payload = jwt.decode(token, secret_key, algorithms=[algorithm])
         user_id: str = payload.get("sub")
-        if user_id is None:
+        if not user_id:
             raise HTTPException(status_code=401, detail="Invalid token")
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid token")
