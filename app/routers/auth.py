@@ -1,102 +1,155 @@
-from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordBearer
-from sqlalchemy.orm import Session
-from .. import models, schemas
-from ..database import get_db
-from ..utils import create_jwt
-import random
-import os
-import logging
+# app/routers/auth.py
 
-# Optional Africa's Talking SDK. If not installed or not configured, we fall back
-# to printing the OTP to console (development mode).
+import os
+import random
+import logging
+from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel
+import asyncpg
+from jose import jwt, JWTError
+
+# Optional Africa's Talking SDK (fallback to console if not available)
 try:
     import africastalking
-except Exception:  # keep broad to catch ImportError or other issues
+except Exception:
     africastalking = None
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 
-# Fake OTP store
+# In-memory OTP store (simple & effective for MVP)
 otp_store = {}
 
+# ────────────────────────────── SCHEMAS ──────────────────────────────
+
+class PhoneRequest(BaseModel):
+    phone: str
+
+
+class OTPVerify(BaseModel):
+    phone: str
+    otp: str
+    full_name: Optional[str] = None
+    role: str = "driver"  # default role
+
+
+class Token(BaseModel):
+    access_token: str
+
+
+class UserOut(BaseModel):
+    id: int
+    phone: str
+    full_name: str | None
+    role: str
+
+
+# ────────────────────────────── DEPENDENCIES ──────────────────────────────
+
+async def get_db() -> asyncpg.Connection:
+    # Reuse the same pool from main.py lifespan
+    from ..main import pool  # Adjust path if needed
+    async with pool.acquire() as conn:
+        yield conn
+
+
+# ────────────────────────────── HELPERS ──────────────────────────────
+
+def create_jwt(data: dict) -> str:
+    from ..utils import create_jwt as utils_create_jwt  # import your existing function
+    return utils_create_jwt(data)
+
+
+async def send_sms_via_africastalking(phone: str, message: str) -> bool:
+    if africastalking is None:
+        logging.debug("Africa's Talking SDK not available")
+        return False
+
+    username = os.getenv("AT_USERNAME") or os.getenv("AFRICASTALKING_USERNAME")
+    api_key = os.getenv("AT_API_KEY") or os.getenv("AFRICASTALKING_APIKEY")
+    from_number = os.getenv("AT_FROM") or os.getenv("AFRICASTALKING_FROM")
+
+    if not username or not api_key:
+        logging.warning("Africa's Talking credentials missing")
+        return False
+
+    try:
+        africastalking.initialize(username, api_key)
+        sms = africastalking.SMS
+        kwargs = {"to": phone, "message": message}
+        if from_number:
+            kwargs["from_"] = from_number
+        response = sms.send(**kwargs)
+        logging.info("Africa's Talking SMS sent: %s", response)
+        return True
+    except Exception as e:
+        logging.exception("Failed to send SMS via Africa's Talking: %s", e)
+        return False
+
+
+# ────────────────────────────── ENDPOINTS ──────────────────────────────
+
 @router.post("/send-otp")
-def send_otp(req: schemas.PhoneRequest):
+async def send_otp(req: PhoneRequest):
     otp = random.randint(100000, 999999)
     otp_store[req.phone] = str(otp)
-    # Attempt to send via Africa's Talking when configured
     msg = f"Your MOTOFIX OTP is {otp}"
 
-    def _send_via_africastalking(phone: str, message: str) -> bool:
-        if africastalking is None:
-            logging.debug("africastalking SDK not available; skipping provider send")
-            return False
+    sent = await send_sms_via_africastalking(req.phone, msg)
 
-        username = os.getenv("AT_USERNAME") or os.getenv("AFRICASTALKING_USERNAME")
-        api_key = os.getenv("AT_API_KEY") or os.getenv("AFRICASTALKING_APIKEY")
-        from_number = os.getenv("AT_FROM") or os.getenv("AFRICASTALKING_FROM")
-
-        if not username or not api_key:
-            logging.warning("Africa's Talking credentials not set; skipping send")
-            return False
-
-        try:
-            africastalking.initialize(username, api_key)
-            sms = africastalking.SMS
-            # `from_` is optional depending on your AT settings
-            params = {"to": phone, "message": message}
-            if from_number:
-                # the africastalking SDK `send` signature varies; use keyword 'from_' when available
-                try:
-                    response = sms.send(message, [phone], from_=from_number)
-                except TypeError:
-                    response = sms.send(message, [phone])
-            else:
-                response = sms.send(message, [phone])
-            logging.info("Africa's Talking SMS response: %s", response)
-            return True
-        except Exception:
-            logging.exception("Failed to send SMS via Africa's Talking")
-            return False
-
-    sent = _send_via_africastalking(req.phone, msg)
-
-    # Always print OTP to console in dev for convenience (and as fallback)
+    # Always log OTP for local/dev testing
     print(f"\nOTP → {req.phone}: {otp}\n")
 
     if sent:
-        return {"message": "OTP sent via Africa's Talking"}
+        return {"message": "OTP sent successfully"}
     else:
-        return {"message": "OTP stored and printed (provider not configured)"}
+        return {"message": "OTP generated (printed to console - provider not configured)"}
 
-@router.post("/login", response_model=schemas.Token)
-def login(req: schemas.OTPVerify, db: Session = Depends(get_db)):
-    if otp_store.get(req.phone) != req.otp:
-        raise HTTPException(status_code=400, detail="Wrong OTP")
-    
-    user = db.query(models.User).filter(models.User.phone == req.phone).first()
-    if not user:
-        user = models.User(phone=req.phone, full_name=req.full_name, role=req.role)
-        db.add(user)
-        db.commit()
-        db.refresh(user)
-    
-    del otp_store[req.phone]
-    
-    token = create_jwt({"sub": str(user.id), "role": user.role})
+
+@router.post("/login", response_model=Token)
+async def login(req: OTPVerify, db: asyncpg.Connection = Depends(get_db)):
+    stored_otp = otp_store.get(req.phone)
+    if stored_otp != req.otp:
+        raise HTTPException(status_code=400, detail="Invalid or expired OTP")
+
+    # Check if user exists
+    query = "SELECT id, phone, full_name, role FROM users WHERE phone = $1"
+    user_row = await db.fetchrow(query, req.phone)
+
+    if not user_row:
+        # Create new user
+        insert_query = """
+            INSERT INTO users (phone, full_name, role)
+            VALUES ($1, $2, $3)
+            RETURNING id
+        """
+        user_id = await db.fetchval(insert_query, req.phone, req.full_name or "Driver", req.role)
+    else:
+        user_id = user_row["id"]
+
+    # Clean up OTP
+    otp_store.pop(req.phone, None)
+
+    # Generate JWT
+    token = create_jwt({"sub": str(user_id), "role": req.role or "driver"})
     return {"access_token": token}
 
-@router.get("/me", response_model=schemas.UserOut)
-def me(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
-    from jose import jwt, JWTError
+
+@router.get("/me", response_model=UserOut)
+async def me(token: str = Depends(oauth2_scheme), db: asyncpg.Connection = Depends(get_db)):
+    secret_key = os.getenv("SECRET_KEY")
+    algorithm = os.getenv("ALGORITHM", "HS256")
+
     try:
-        payload = jwt.decode(token, os.getenv("SECRET_KEY"), algorithms=[os.getenv("ALGORITHM")])
+        payload = jwt.decode(token, secret_key, algorithms=[algorithm])
         user_id: str = payload.get("sub")
+        if user_id is None:
+            raise HTTPException(status_code=401, detail="Invalid token")
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid token")
-    
-    user = db.query(models.User).filter(models.User.id == int(user_id)).first()
-    if not user:
+
+    query = "SELECT id, phone, full_name, role FROM users WHERE id = $1"
+    user_row = await db.fetchrow(query, int(user_id))
+    if not user_row:
         raise HTTPException(status_code=404, detail="User not found")
-    return user
+
+    return dict(user_row)
