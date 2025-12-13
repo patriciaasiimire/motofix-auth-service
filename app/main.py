@@ -34,7 +34,7 @@ app.add_middleware(
     allow_origins=[
         "https://motofix-control-center.onrender.com",  # Your admin dashboard / frontend
         # Add any local dev URLs if needed
-        "http://localhost:3000"
+        "http://localhost:3000",
         "http://localhost:8080",
         "http://localhost:5173",
     ],
