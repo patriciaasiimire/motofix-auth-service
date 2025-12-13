@@ -5,6 +5,7 @@ import random
 import logging
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
+from typing import Optional
 import asyncpg
 from jose import jwt, JWTError
 
