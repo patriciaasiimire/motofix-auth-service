@@ -17,6 +17,8 @@ except Exception:
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
 
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
+
 # In-memory OTP store (simple & effective for MVP)
 otp_store = {}
 
