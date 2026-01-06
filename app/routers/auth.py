@@ -3,7 +3,7 @@
 import os
 import random
 import logging
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request, Response
 from fastapi.security import OAuth2PasswordBearer
 from pydantic import BaseModel
 from typing import Optional
@@ -120,7 +120,7 @@ async def send_otp(req: PhoneRequest):
 
 
 @router.post("/login", response_model=Token)
-async def login(req: OTPVerify, db: asyncpg.Connection = Depends(get_db)):
+async def login(req: OTPVerify, response: Response, db: asyncpg.Connection = Depends(get_db)):
     stored_otp = otp_store.get(req.phone)
     if stored_otp != req.otp:
         raise HTTPException(status_code=400, detail="Invalid or expired OTP")
@@ -150,11 +150,28 @@ async def login(req: OTPVerify, db: asyncpg.Connection = Depends(get_db)):
 
     # Generate JWT
     token = create_jwt({"sub": str(user_id), "role": req.role or "driver"})
-    return {"access_token": token}
+
+    # Fetch user record to return in response
+    user_row = await db.fetchrow("SELECT id, phone, full_name, role FROM users WHERE id = $1", int(user_id))
+
+    # Set token as a secure httpOnly cookie so the frontend can persist authentication
+    # Cookie lifetime is aligned with JWT expiry (default ~30 days). Adjust via env if needed.
+    cookie_max_age = int(os.getenv("ACCESS_TOKEN_EXPIRE_SECONDS", 60 * 60 * 24 * 30))
+    secure_cookie = os.getenv("ENV", "production") == "production"
+    response.set_cookie(
+        key="access_token",
+        value=token,
+        httponly=True,
+        secure=secure_cookie,
+        samesite="lax",
+        max_age=cookie_max_age,
+        path="/",
+    )
+
+    return {"access_token": token, "user": dict(user_row) if user_row else None}
 
 
-@router.get("/me", response_model=UserOut)
-async def me(token: str = Depends(oauth2_scheme), db: asyncpg.Connection = Depends(get_db)):
+async def _get_user_from_token(token: str, db: asyncpg.Connection):
     secret_key = os.getenv("SECRET_KEY")
     algorithm = os.getenv("ALGORITHM", "HS256")
 
@@ -172,3 +189,30 @@ async def me(token: str = Depends(oauth2_scheme), db: asyncpg.Connection = Depen
         raise HTTPException(status_code=404, detail="User not found")
 
     return dict(user_row)
+
+
+async def get_current_user(request: Request, db: asyncpg.Connection = Depends(get_db)):
+    # Prefer Authorization header, fallback to httpOnly cookie named 'access_token'
+    token = None
+    auth_header = request.headers.get("authorization")
+    if auth_header and auth_header.lower().startswith("bearer "):
+        token = auth_header.split(" ", 1)[1].strip()
+    else:
+        token = request.cookies.get("access_token")
+
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    return await _get_user_from_token(token, db)
+
+
+@router.get("/me", response_model=UserOut)
+async def me(user: dict = Depends(get_current_user)):
+    return user
+
+
+@router.post("/logout")
+async def logout(response: Response):
+    # Clear the access_token cookie
+    response.delete_cookie(key="access_token", path="/")
+    return {"message": "Logged out"}
