@@ -32,14 +32,15 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "https://motofix-control-center.onrender.com",  # Your admin dashboard / frontend
-        # Add any local dev URLs if needed
+        "https://motofix-driver-assist.onrender.com",
+        "https://motofixug.onrender.com",
+        # Local development URLs
         "http://localhost:3000",
         "http://localhost:8080",
         "http://localhost:5173",
     ],
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 
