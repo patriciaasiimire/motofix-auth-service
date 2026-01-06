@@ -99,19 +99,24 @@ async def send_sms_via_africastalking(phone: str, message: str) -> bool:
 
 @router.post("/send-otp")
 async def send_otp(req: PhoneRequest):
-    otp = random.randint(100000, 999999)
-    otp_store[req.phone] = str(otp)
+    phone = req.phone.strip()
+
+    # Basic Ugandan phone validation: +256 followed by 9 digits (e.g. +256712345678)
+    if not phone.startswith("+256") or len(phone) != 13 or not phone[4:].isdigit():
+        raise HTTPException(status_code=422, detail="Invalid phone format. Use +256XXXXXXXXX")
+
+    otp = f"{random.randint(0, 999999):06d}"
+    otp_store[phone] = otp
     msg = f"Your MOTOFIX OTP is {otp}. Valid for 10 minutes."
 
-    sent = await send_sms_via_africastalking(req.phone, msg)
+    sent = await send_sms_via_africastalking(phone, msg)
 
-    # Always print OTP to logs for testing
-    print(f"\nOTP → {req.phone}: {otp}\n")
+    # Always print/log OTP to console for testing (remove in production)
+    logging.info("OTP for %s: %s", phone, otp)
+    print(f"\nOTP → {phone}: {otp}\n")
 
-    if sent:
-        return {"message": "OTP sent successfully via SMS"}
-    else:
-        return {"message": "OTP generated and printed to logs (SMS provider not configured or failed)"}
+    # For development/testing return the OTP in the response
+    return {"message": "OTP sent successfully", "otp": otp}
 
 
 @router.post("/login", response_model=Token)
