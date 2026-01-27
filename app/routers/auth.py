@@ -121,8 +121,11 @@ async def send_otp(req: PhoneRequest):
 
 @router.post("/login", response_model=Token)
 async def login(req: OTPVerify, response: Response, db: asyncpg.Connection = Depends(get_db)):
+    logging.info(f"🔐 [POST /auth/login] Login attempt for phone: {req.phone}")
+    
     stored_otp = otp_store.get(req.phone)
     if stored_otp != req.otp:
+        logging.warning(f"❌ [POST /auth/login] Invalid OTP for phone: {req.phone}")
         raise HTTPException(status_code=400, detail="Invalid or expired OTP")
 
     # Check if user exists
@@ -131,6 +134,7 @@ async def login(req: OTPVerify, response: Response, db: asyncpg.Connection = Dep
 
     if not user_row:
         # Create new user
+        logging.info(f"✅ [POST /auth/login] Creating new user: {req.phone}")
         insert_query = """
             INSERT INTO users (phone, full_name, role)
             VALUES ($1, $2, $3)
@@ -143,6 +147,7 @@ async def login(req: OTPVerify, response: Response, db: asyncpg.Connection = Dep
             req.role
         )
     else:
+        logging.info(f"ℹ️ [POST /auth/login] Existing user found: {req.phone}")
         user_id = user_row["id"]
 
     # Clean up OTP
@@ -150,6 +155,7 @@ async def login(req: OTPVerify, response: Response, db: asyncpg.Connection = Dep
 
     # Generate JWT
     token = create_jwt({"sub": str(user_id), "role": req.role or "driver"})
+    logging.debug(f"✅ [POST /auth/login] JWT created for user_id: {user_id}")
 
     # Fetch user record to return in response
     user_row = await db.fetchrow("SELECT id, phone, full_name, role FROM users WHERE id = $1", int(user_id))
@@ -167,6 +173,7 @@ async def login(req: OTPVerify, response: Response, db: asyncpg.Connection = Dep
         max_age=cookie_max_age,
         path="/",
     )
+    logging.info(f"✅ [POST /auth/login] Login successful for phone: {req.phone}, token issued")
 
     return {"access_token": token, "user": dict(user_row) if user_row else None}
 
@@ -175,19 +182,27 @@ async def _get_user_from_token(token: str, db: asyncpg.Connection):
     secret_key = os.getenv("SECRET_KEY")
     algorithm = os.getenv("ALGORITHM", "HS256")
 
+    logging.debug(f"🔐 [Token Decode] Using algorithm: {algorithm}")
+
     try:
         payload = jwt.decode(token, secret_key, algorithms=[algorithm])
         user_id: str = payload.get("sub")
+        logging.debug(f"✅ [Token Decode] Successfully decoded token for user_id: {user_id}")
         if not user_id:
+            logging.error("❌ [Token Decode] Token missing 'sub' claim")
             raise HTTPException(status_code=401, detail="Invalid token")
-    except JWTError:
+    except JWTError as e:
+        logging.error(f"❌ [Token Decode] JWT decode failed: {str(e)}")
         raise HTTPException(status_code=401, detail="Invalid token")
 
     query = "SELECT id, phone, full_name, role FROM users WHERE id = $1"
+    logging.debug(f"🔍 [DB Query] Looking up user with id={user_id}")
     user_row = await db.fetchrow(query, int(user_id))
     if not user_row:
+        logging.error(f"❌ [DB Query] User not found with id={user_id}")
         raise HTTPException(status_code=404, detail="User not found")
 
+    logging.info(f"✅ [Auth] User verified successfully: {user_row.get('phone')}")
     return dict(user_row)
 
 
@@ -195,19 +210,32 @@ async def get_current_user(request: Request, db: asyncpg.Connection = Depends(ge
     # Prefer Authorization header, fallback to httpOnly cookie named 'access_token'
     token = None
     auth_header = request.headers.get("authorization")
+    request_origin = request.headers.get("origin", "unknown")
+    
+    logging.info(f"🔍 [get_current_user] Origin: {request_origin}")
+    logging.debug(f"📋 [get_current_user] Headers: Authorization={bool(auth_header)}")
+    
     if auth_header and auth_header.lower().startswith("bearer "):
         token = auth_header.split(" ", 1)[1].strip()
+        logging.debug(f"✅ [get_current_user] Bearer token found in Authorization header (length={len(token)})")
     else:
         token = request.cookies.get("access_token")
+        if token:
+            logging.debug(f"ℹ️ [get_current_user] Using token from httpOnly cookie")
+        else:
+            logging.debug(f"ℹ️ [get_current_user] No Authorization header, no cookie")
 
     if not token:
+        logging.error("❌ [get_current_user] No token found in request")
         raise HTTPException(status_code=401, detail="Not authenticated")
 
+    logging.debug(f"🔐 [get_current_user] Verifying token...")
     return await _get_user_from_token(token, db)
 
 
 @router.get("/me", response_model=UserOut)
 async def me(user: dict = Depends(get_current_user)):
+    logging.info(f"✅ [GET /auth/me] Successfully verified user: {user.get('phone')}")
     return user
 
 

@@ -1,6 +1,7 @@
 # motofix-auth-service/app/main.py
 
 import os
+import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import asyncpg
@@ -10,6 +11,10 @@ from .routers import auth
 from pathlib import Path
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
+
+# Configure logging
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger("motofix-auth")
 
 # ────────────────────────────── DATABASE POOL ──────────────────────────────
 
@@ -35,6 +40,8 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
+        "https://customer.motofix.org",
+        "https://admin.motofix.org",
         "https://motofix-driver-assist.onrender.com",
         "https://motofixug.onrender.com",
         # Local development URLs
@@ -47,6 +54,22 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ────────────────────────────── STARTUP EVENT ──────────────────────────────
+
+@app.on_event("startup")
+async def startup_event():
+    logger.info("=" * 60)
+    logger.info("🚀 MOTOFIX Auth Service Starting")
+    logger.info("=" * 60)
+    logger.info("✅ CORS Enabled for:")
+    logger.info("   • https://customer.motofix.org")
+    logger.info("   • https://admin.motofix.org")
+    logger.info("   • https://motofix-driver-assist.onrender.com")
+    logger.info("   • https://motofixug.onrender.com")
+    logger.info("   • localhost:3000, 8080, 5173 (dev)")
+    logger.info("✅ Credentials allowed: Yes (httpOnly cookies + Bearer tokens)")
+    logger.info("=" * 60)
+
 # ────────────────────────────── DEPENDENCY ──────────────────────────────
 # Make pool available to routers
 def get_pool():
@@ -54,6 +77,22 @@ def get_pool():
 
 # Pass pool to auth router if needed (or use dependency injection in router)
 app.include_router(auth.router)
+
+# ────────────────────────────── GLOBAL EXCEPTION HANDLER ──────────────────────────────
+
+from fastapi import Request
+from fastapi.responses import JSONResponse
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logger.error(f"❌ [Global Exception] Type: {type(exc).__name__}")
+    logger.error(f"❌ [Global Exception] Path: {request.url.path}")
+    logger.error(f"❌ [Global Exception] Origin: {request.headers.get('origin', 'unknown')}")
+    logger.error(f"❌ [Global Exception] Details: {str(exc)}")
+    return JSONResponse(
+        status_code=500,
+        content={"error_type": type(exc).__name__, "message": str(exc)}
+    )
 
 # ────────────────────────────── STATIC / SPA FALLBACK ──────────────────────────────
 # If you bundle the frontend with this service, set the `FRONTEND_DIST` env var
