@@ -50,8 +50,9 @@ app.add_middleware(
         "http://localhost:5173",
     ],
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization"],
+    max_age=3600,  # Cache preflight for 1 hour
 )
 
 # ────────────────────────────── STARTUP EVENT ──────────────────────────────
