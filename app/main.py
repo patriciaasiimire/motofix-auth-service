@@ -3,7 +3,6 @@
 import os
 import logging
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
 import asyncpg
 from contextlib import asynccontextmanager
 
@@ -11,6 +10,7 @@ from .routers import auth
 from pathlib import Path
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
+from app.core.cors import setup_cors
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)
@@ -35,41 +35,17 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# ────────────────────────────── CORS ──────────────────────────────
-# Allow your frontend to call this service
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
-        "https://customer.motofix.org",
-        "https://admin.motofix.org",
-        "https://motofix-driver-assist.onrender.com",
-        "https://motofixug.onrender.com",
-        # Local development URLs
-        "http://localhost:3000",
-        "http://localhost:8080",
-        "http://localhost:5173",
-    ],
-    allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Content-Type", "Authorization"],
-    max_age=3600,  # Cache preflight for 1 hour
-)
+# ────────────────────────────── CORS (CENTRALIZED) ──────────────────────────────
+# Import and apply centralized CORS configuration from app.core.cors
+setup_cors(app)
 
 # ────────────────────────────── STARTUP EVENT ──────────────────────────────
 
 @app.on_event("startup")
 async def startup_event():
-    logger.info("=" * 60)
+    logger.info("=" * 70)
     logger.info("🚀 MOTOFIX Auth Service Starting")
-    logger.info("=" * 60)
-    logger.info("✅ CORS Enabled for:")
-    logger.info("   • https://customer.motofix.org")
-    logger.info("   • https://admin.motofix.org")
-    logger.info("   • https://motofix-driver-assist.onrender.com")
-    logger.info("   • https://motofixug.onrender.com")
-    logger.info("   • localhost:3000, 8080, 5173 (dev)")
-    logger.info("✅ Credentials allowed: Yes (httpOnly cookies + Bearer tokens)")
-    logger.info("=" * 60)
+    logger.info("=" * 70)
 
 # ────────────────────────────── DEPENDENCY ──────────────────────────────
 # Make pool available to routers
