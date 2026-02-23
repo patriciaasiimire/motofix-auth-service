@@ -53,7 +53,8 @@ def get_pool():
     return pool
 
 # Pass pool to auth router if needed (or use dependency injection in router)
-app.include_router(auth.router)
+auth_router = auth.router
+app.include_router(auth_router, prefix="/auth")
 
 # ────────────────────────────── GLOBAL EXCEPTION HANDLER ──────────────────────────────
 
