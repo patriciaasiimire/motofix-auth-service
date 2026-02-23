@@ -35,6 +35,10 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+@app.get("/health")
+async def health_check():
+    return {"status": "ok"}
+
 # ────────────────────────────── CORS (CENTRALIZED) ──────────────────────────────
 # Import and apply centralized CORS configuration from app.core.cors
 setup_cors(app)
@@ -43,6 +47,9 @@ setup_cors(app)
 
 @app.on_event("startup")
 async def startup_event():
+    for route in app.routes:
+        if hasattr(route, "path") and route.path == "/health":
+            print(f"Route: {route.path} - {route.name}")
     logger.info("=" * 70)
     logger.info("🚀 MOTOFIX Auth Service Starting")
     logger.info("=" * 70)
