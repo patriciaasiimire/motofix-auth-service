@@ -7,9 +7,6 @@ import asyncpg
 from contextlib import asynccontextmanager
 
 from .routers import auth
-from pathlib import Path
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
 from app.core.cors import setup_cors
 
 # Configure logging
@@ -78,21 +75,3 @@ async def global_exception_handler(request: Request, exc: Exception):
         status_code=500,
         content={"error_type": type(exc).__name__, "message": str(exc)}
     )
-
-# ────────────────────────────── STATIC / SPA FALLBACK ──────────────────────────────
-# If you bundle the frontend with this service, set the `FRONTEND_DIST` env var
-# (path to built SPA, e.g. `dist` or `build`). When present, serve static files
-# and return index.html for unknown paths so client-side routing works.
-frontend_dir = os.getenv(
-    "FRONTEND_DIST",
-    str(Path(__file__).resolve().parents[1] / "frontend")
-)
-frontend_path = Path(frontend_dir)
-index_file = frontend_path / "index.html"
-
-if frontend_path.exists() and index_file.exists():
-    app.mount("/", StaticFiles(directory=str(frontend_path), html=True), name="frontend")
-
-    @app.get("/{full_path:path}", include_in_schema=False)
-    async def spa_fallback(full_path: str):
-        return FileResponse(index_file)
