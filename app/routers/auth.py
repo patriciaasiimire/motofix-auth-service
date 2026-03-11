@@ -46,6 +46,7 @@ class UserOut(BaseModel):
     phone: str
     full_name: str | None
     role: str
+    number_plate: str | None = None
 
 
 # ────────────────────────────── DEPENDENCIES ──────────────────────────────
@@ -129,7 +130,7 @@ async def login(req: OTPVerify, response: Response, db: asyncpg.Connection = Dep
         raise HTTPException(status_code=400, detail="Invalid or expired OTP")
 
     # Check if user exists
-    query = "SELECT id, phone, full_name, role FROM users WHERE phone = $1"
+    query = "SELECT id, phone, full_name, role, number_plate FROM users WHERE phone = $1"
     user_row = await db.fetchrow(query, req.phone)
 
     if not user_row:
@@ -143,7 +144,7 @@ async def login(req: OTPVerify, response: Response, db: asyncpg.Connection = Dep
         user_id = await db.fetchval(
             insert_query,
             req.phone,
-            req.full_name or "Driver",
+            req.full_name or None,
             req.role
         )
     else:
@@ -158,7 +159,7 @@ async def login(req: OTPVerify, response: Response, db: asyncpg.Connection = Dep
     logging.debug(f"✅ [POST /auth/login] JWT created for user_id: {user_id}")
 
     # Fetch user record to return in response
-    user_row = await db.fetchrow("SELECT id, phone, full_name, role FROM users WHERE id = $1", int(user_id))
+    user_row = await db.fetchrow("SELECT id, phone, full_name, role, number_plate FROM users WHERE id = $1", int(user_id))
 
     # Set token as a secure httpOnly cookie so the frontend can persist authentication
     # Cookie lifetime is aligned with JWT expiry (default ~30 days). Adjust via env if needed.
@@ -195,7 +196,7 @@ async def _get_user_from_token(token: str, db: asyncpg.Connection):
         logging.error(f"❌ [Token Decode] JWT decode failed: {str(e)}")
         raise HTTPException(status_code=401, detail="Invalid token")
 
-    query = "SELECT id, phone, full_name, role FROM users WHERE id = $1"
+    query = "SELECT id, phone, full_name, role, number_plate FROM users WHERE id = $1"
     logging.debug(f"🔍 [DB Query] Looking up user with id={user_id}")
     user_row = await db.fetchrow(query, int(user_id))
     if not user_row:

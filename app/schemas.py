@@ -21,9 +21,15 @@ class UserOut(BaseModel):
     phone: str
     full_name: Optional[str]
     role: str
+    number_plate: Optional[str] = None
 
     class Config:
         from_attributes = True
+
+
+class UserProfileUpdate(BaseModel):
+    full_name: Optional[str] = None
+    number_plate: Optional[str] = None
 
 
 class RequestCreate(BaseModel):

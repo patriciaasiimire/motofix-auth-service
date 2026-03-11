@@ -6,7 +6,7 @@ from fastapi import FastAPI
 import asyncpg
 from contextlib import asynccontextmanager
 
-from .routers import auth
+from .routers import auth, users
 from app.core.cors import setup_cors
 
 # Configure logging
@@ -22,6 +22,21 @@ async def lifespan(app: FastAPI):
     global pool
     # Use Render's internal DATABASE_URL
     pool = await asyncpg.create_pool(dsn=os.getenv("DATABASE_URL"))
+
+    # ── Schema migrations ──────────────────────────────────────────────
+    async with pool.acquire() as conn:
+        # Add number_plate column if it doesn't exist (idempotent migration)
+        await conn.execute("""
+            ALTER TABLE users
+            ADD COLUMN IF NOT EXISTS number_plate TEXT
+        """)
+        # Ensure created_at column exists with a default
+        await conn.execute("""
+            ALTER TABLE users
+            ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW()
+        """)
+    logger.info("✅ DB schema migrations applied")
+
     yield
     await pool.close()
 
@@ -59,6 +74,7 @@ def get_pool():
 # Pass pool to auth router if needed (or use dependency injection in router)
 auth_router = auth.router
 app.include_router(auth_router, prefix="/auth")
+app.include_router(users.router)
 
 # ────────────────────────────── GLOBAL EXCEPTION HANDLER ──────────────────────────────
 
