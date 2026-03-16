@@ -10,13 +10,3 @@ class User(Base):
     full_name = Column(String, nullable=True)
     role = Column(String, default="customer")  # customer / mechanic / driver
     number_plate = Column(String, nullable=True)
-
-
-class Request(Base):
-    __tablename__ = "requests"
-    id = Column(Integer, primary_key=True, index=True)
-    customer_name = Column(String, nullable=False)
-    service_type = Column(String, nullable=False)
-    location = Column(String, nullable=False)
-    description = Column(String, nullable=True)
-    status = Column(String, default="pending")

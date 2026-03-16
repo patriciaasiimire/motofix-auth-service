@@ -30,22 +30,3 @@ class UserOut(BaseModel):
 class UserProfileUpdate(BaseModel):
     full_name: Optional[str] = None
     number_plate: Optional[str] = None
-
-
-class RequestCreate(BaseModel):
-    customer_name: str
-    service_type: str
-    location: str
-    description: Optional[str] = None
-
-
-class RequestOut(BaseModel):
-    id: int
-    customer_name: str
-    service_type: str
-    location: str
-    description: Optional[str]
-    status: str
-
-    class Config:
-        from_attributes = True
