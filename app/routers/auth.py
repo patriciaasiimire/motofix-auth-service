@@ -154,8 +154,8 @@ async def login(req: OTPVerify, response: Response, db: asyncpg.Connection = Dep
     # Clean up OTP
     otp_store.pop(req.phone, None)
 
-    # Generate JWT
-    token = create_jwt({"sub": str(user_id), "role": req.role or "driver"})
+    # Generate JWT — include phone so downstream services can authorise without a users-table lookup
+    token = create_jwt({"sub": str(user_id), "role": req.role or "driver", "phone": req.phone})
     logging.debug(f"✅ [POST /auth/login] JWT created for user_id: {user_id}")
 
     # Fetch user record to return in response
